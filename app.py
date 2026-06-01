@@ -100,9 +100,23 @@ def split_address(address1, address2, door_number, max_length=35):
         log_error(f"地址拆分错误: {str(e)}")
         return str(address1), ""
 
-def process_excel_data(df):
-    """处理在赛狐平台下载的数据，并根据SKU系列设置Retailer ID为WF 1店或WF 2店"""
+def process_excel_data(df, signature_required):
+    """处理赛狐数据，生成WF多渠道格式
+    
+    Args:
+        df: 原始赛狐订单DataFrame
+        signature_required: bool, 是否要求签收服务
+    """
     new_rows = []
+    
+    # 定义输出列的顺序（完全符合Wayfair模板）
+    column_order = [
+        'Retailer ID', 'Retailer PO Number', 'Retailer Order Number', 'Recipient Order Number',
+        'Part Number', 'Quantity', 'Fulfillment Warehouse ID', 'Shipping Account Number',
+        'SCAC Code', 'Ship Speed', 'Delivery Signature Required', 'Shipping Name',
+        'Shipping Address 1', 'Shipping Address 2', 'Shipping City', 'Shipping State',
+        'Shipping Postal Code', 'Shipping Country', 'Shipping Phone Number', 'Shipping Email'
+    ]
     
     try:
         for _, row in df.iterrows():
@@ -114,35 +128,50 @@ def process_excel_data(df):
                 continue
                 
             order_number = row.get('订单号', '')
-            quantity = int(float(row.get('SKU数量', 1)))  # 处理可能的浮点数
+            quantity = int(float(row.get('SKU数量', 1)))
             
             for i in range(quantity):
-                new_row = {}
                 suffix = f"-{i+1}" if quantity > 1 else ""
                 
                 # 获取映射后的Part Number
                 part_number = reverse_sku_mapping(row.get('SKU', ''))
                 
-                # 根据Part Number确定店铺标识，填入 Retailer ID
+                # 根据Part Number确定Retailer ID（固定数字）
                 if part_number.startswith("WS007"):
-                    retailer_id = "WF 1店"
+                    retailer_id = "33054"   # WF 1店
                 elif part_number.startswith("WS008"):
-                    retailer_id = "WF 2店"
+                    retailer_id = "35369"   # WF 2店
                 else:
-                    retailer_id = ""   # 其他情况留空
+                    retailer_id = ""        # 其他情况留空
                 
-                new_row['Retailer ID'] = retailer_id
-                new_row['Retailer PO Number'] = f"{order_number}{suffix}"
-                new_row['Retailer Order Number'] = f"{order_number}{suffix}"
-                new_row['Recipient Order Number'] = ''
-                new_row['Part Number'] = part_number
-                new_row['Quantity'] = 1
-                new_row['Fulfillment Warehouse ID'] = ''
-                new_row['Shipping Account Number'] = ''
-                new_row['SCAC Code'] = ''
-                new_row['Ship Speed'] = ''
-                new_row['Shipping Name'] = row.get('收件人', '')
+                # 签名服务字段值
+                delivery_signature = "Yes" if signature_required else ""
                 
+                # 构建行数据（按顺序）
+                new_row = {
+                    'Retailer ID': retailer_id,
+                    'Retailer PO Number': f"{order_number}{suffix}",
+                    'Retailer Order Number': f"{order_number}{suffix}",
+                    'Recipient Order Number': '',
+                    'Part Number': part_number,
+                    'Quantity': 1,
+                    'Fulfillment Warehouse ID': '',
+                    'Shipping Account Number': '',
+                    'SCAC Code': '',
+                    'Ship Speed': '',
+                    'Delivery Signature Required': delivery_signature,
+                    'Shipping Name': row.get('收件人', ''),
+                    'Shipping Address 1': '',
+                    'Shipping Address 2': '',
+                    'Shipping City': row.get('城市', ''),
+                    'Shipping State': row.get('州/省', ''),
+                    'Shipping Postal Code': row.get('邮编', ''),
+                    'Shipping Country': 'US',
+                    'Shipping Phone Number': format_phone_number(row.get('电话', '')),
+                    'Shipping Email': 'tpcfjjyxgs@163.com'
+                }
+                
+                # 处理地址拆分
                 addr1, addr2 = split_address(
                     row.get('地址1', ''),
                     row.get('地址2', ''),
@@ -151,20 +180,18 @@ def process_excel_data(df):
                 new_row['Shipping Address 1'] = addr1
                 new_row['Shipping Address 2'] = addr2
                 
-                new_row['Shipping City'] = row.get('城市', '')
-                new_row['Shipping State'] = row.get('州/省', '')
-                new_row['Shipping Postal Code'] = row.get('邮编', '')
-                new_row['Shipping Country'] = 'US'
-                new_row['Shipping Phone Number'] = format_phone_number(row.get('电话', ''))
-                new_row['Shipping Email'] = 'tpcfjjyxgs@163.com'
-                
                 new_rows.append(new_row)
                 
     except Exception as e:
         log_error(f"数据处理错误: {str(e)}")
         st.error(f"数据处理错误: {str(e)}")
     
-    return pd.DataFrame(new_rows)
+    # 构建DataFrame并确保列顺序
+    result_df = pd.DataFrame(new_rows)
+    if not result_df.empty:
+        result_df = result_df[column_order]
+    
+    return result_df
 
 def get_download_link(df, filename):
     """生成下载链接"""
@@ -178,25 +205,30 @@ def get_download_link(df, filename):
 
 def main():
     """主函数"""
-    # 标题和说明
     st.title("赛狐文件和WF对接转化器")
     st.markdown("---")
     
     st.markdown("""
     ### 使用说明
     1. 上传从赛狐平台下载的Excel文件
-    2. 系统将自动处理数据并生成适用于WF系统的格式
-    3. **自动识别店铺**：根据SKU系列自动填写 `Retailer ID` 列  
-       - WS007系列 → WF 1店  
-       - WS008系列 → WF 2店  
-    4. 处理完成后，下载生成的文件
-    
-    **注意：** 此工具仅适用于赛狐和WF多渠道对接
+    2. 选择是否需要**签收服务**（Delivery Signature Required）
+    3. 系统自动处理：
+       - 根据SKU系列自动填写 `Retailer ID`：  
+         - WS007系列 → **33054** (WF 1店)  
+         - WS008系列 → **35369** (WF 2店)  
+       - 按照Wayfair多渠道模板生成标准列顺序
+       - 自动拆分地址（每行不超过35字符）
+    4. 下载处理后的文件，可直接导入Wayfair系统
     """)
     
     # 文件上传区域
     st.markdown("### 上传文件")
     uploaded_file = st.file_uploader("选择要处理的Excel文件", type=["xlsx"])
+    
+    # 新增：签名服务选项
+    st.markdown("### 签收服务设置")
+    signature_required = st.checkbox("要求签收服务 (Delivery Signature Required)", 
+                                     help="勾选后，输出文件的「Delivery Signature Required」列将填写 Yes")
     
     if uploaded_file is not None:
         try:
@@ -211,7 +243,7 @@ def main():
             
             # 处理数据
             st.info("正在处理数据...")
-            processed_df = process_excel_data(df)
+            processed_df = process_excel_data(df, signature_required)
             
             if processed_df.empty:
                 st.error("处理完成，但没有生成有效数据，请检查原始文件格式")
@@ -219,7 +251,7 @@ def main():
                 st.success(f"处理完成，生成 {len(processed_df)} 行数据")
                 
                 # 显示处理后的数据预览
-                with st.expander("查看处理后的数据预览（注意 Retailer ID 列已根据系列填充）"):
+                with st.expander("查看处理后的数据预览（已按WF模板排列）"):
                     st.dataframe(processed_df.head())
                 
                 # 生成下载链接
