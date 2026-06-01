@@ -93,7 +93,7 @@ def split_address(address1, address2, door_number, max_length=35):
         return str(address1), ""
 
 def process_excel_data(df, signature_required):
-    """处理赛狐数据，生成WF多渠道格式，007在上，008在下，中间空一行"""
+    """处理赛狐数据，生成WF多渠道格式"""
     rows_007 = []
     rows_008 = []
 
@@ -164,12 +164,29 @@ def process_excel_data(df, signature_required):
         log_error(f"数据处理错误: {str(e)}")
         st.error(f"数据处理错误: {str(e)}")
 
+    # 1. 构建顶部日期行（仅 Retailer PO Number 填日期）
+    today = datetime.now()
+    date_str = today.strftime("%-m月%-d日")  # 例如 "6月1日"（Windows 兼容问题见下方说明）
+    # 兼容不同系统：若上述格式报错，使用下面备用方案
+    if date_str.startswith("0"):
+        date_str = today.strftime("%#m月%#d日")  # Windows 风格
+    if date_str.startswith("0"):
+        # 手动去除前导零
+        month = today.month
+        day = today.day
+        date_str = f"{month}月{day}日"
+    
+    header_row = {col: '' for col in column_order}
+    header_row['Retailer PO Number'] = date_str
+
+    # 2. 组装最终行：日期行 + 007行 + (空行) + 008行
     final_rows = []
-    final_rows.extend(rows_007)
+    final_rows.append(header_row)                # 顶部日期行
+    final_rows.extend(rows_007)                  # 007系列订单
     if rows_007 and rows_008:
         empty_row = {col: '' for col in column_order}
-        final_rows.append(empty_row)
-    final_rows.extend(rows_008)
+        final_rows.append(empty_row)             # 空行分隔
+    final_rows.extend(rows_008)                  # 008系列订单
 
     result_df = pd.DataFrame(final_rows)
     if not result_df.empty:
@@ -195,15 +212,13 @@ def main():
     2. 选择是否需要**签收服务**（默认勾选“是”）
     3. 系统自动处理：
        - **SKU映射规则**：WS007系列按映射表转换；WS008系列保留原始SKU
-       - **订单排序**：007系列在上 → 空一行 → 008系列在下
+       - **订单排序**：顶部增加日期行 → 007系列 → 空一行 → 008系列
        - **Retailer ID**：007 → 33054，008 → 35369
        - 自动拆分地址、格式化电话
     4. 下载处理后的文件，可直接导入Wayfair系统
     """)
 
     uploaded_file = st.file_uploader("选择要处理的Excel文件", type=["xlsx"])
-    
-    # 默认勾选签收服务
     signature_required = st.checkbox("要求签收服务 (Delivery Signature Required)", 
                                      value=True,
                                      help="勾选后，输出文件的「Delivery Signature Required」列将填写 Yes")
@@ -223,9 +238,9 @@ def main():
             if processed_df.empty:
                 st.error("处理完成，但没有生成有效数据，请检查原始文件格式")
             else:
-                st.success(f"处理完成，生成 {len(processed_df)} 行数据（含空行）")
+                st.success(f"处理完成，生成 {len(processed_df)} 行数据（含日期行和空行）")
 
-                with st.expander("查看处理后的数据预览（007在上，空一行，008在下）"):
+                with st.expander("查看处理后的数据预览（第一行为日期行，仅Retailer PO Number有值）"):
                     st.dataframe(processed_df.head(20))
 
                 original_filename = uploaded_file.name
