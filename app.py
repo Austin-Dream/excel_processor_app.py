@@ -22,8 +22,7 @@ SKU_MAPPING = {
     "WS007-192-14": "WS007-35-KING",
     "WS007-99-12": "WS007-30-TWIN",
     "WS007-99-14": "WS007-35-TWIN",
-    # 注意：以下WS008的映射已废弃，008系列将直接使用原始SKU
-    # 保留原字典但不会使用008的映射
+    # 以下WS008映射已废弃，008系列直接使用原始SKU
     "WS008-137-10": "WS008-26-FULL",
     "WS008-137-12": "WS008-30-FULL",
     "WS008-137-14": "WS008-35-FULL",
@@ -42,11 +41,7 @@ def log_error(error_msg):
         f.write(f"{pd.Timestamp.now()}: {error_msg}\n")
 
 def get_part_number(original_sku):
-    """
-    根据原始SKU返回最终的Part Number
-    - WS007系列：使用映射表转换
-    - WS008系列：直接返回原始SKU（不做映射）
-    """
+    """根据原始SKU返回最终Part Number：WS007映射，WS008直接保留"""
     try:
         if pd.isna(original_sku):
             return ""
@@ -54,7 +49,6 @@ def get_part_number(original_sku):
         if sku_str.startswith("WS007"):
             return SKU_MAPPING.get(sku_str, sku_str)
         elif sku_str.startswith("WS008"):
-            # 008系列不映射，直接使用原始SKU
             return sku_str
         else:
             return sku_str
@@ -99,11 +93,10 @@ def split_address(address1, address2, door_number, max_length=35):
         return str(address1), ""
 
 def process_excel_data(df, signature_required):
-    """处理赛狐数据，生成WF多渠道格式，并实现007在上、008在下，中间空一行"""
-    rows_007 = []   # 存储007系列的行（字典）
-    rows_008 = []   # 存储008系列的行
+    """处理赛狐数据，生成WF多渠道格式，007在上，008在下，中间空一行"""
+    rows_007 = []
+    rows_008 = []
 
-    # 定义输出列的顺序
     column_order = [
         'Retailer ID', 'Retailer PO Number', 'Retailer Order Number', 'Recipient Order Number',
         'Part Number', 'Quantity', 'Fulfillment Warehouse ID', 'Shipping Account Number',
@@ -120,17 +113,15 @@ def process_excel_data(df, signature_required):
                 continue
 
             original_sku = row.get('SKU', '')
-            part_number = get_part_number(original_sku)   # 根据规则得到最终Part Number
+            part_number = get_part_number(original_sku)
 
-            # 判断系列
             if part_number.startswith("WS007"):
-                retailer_id = "33054"   # 1店
+                retailer_id = "33054"
                 target_list = rows_007
             elif part_number.startswith("WS008"):
-                retailer_id = "35369"   # 2店
+                retailer_id = "35369"
                 target_list = rows_008
             else:
-                # 其他情况不处理，跳过
                 continue
 
             order_number = row.get('订单号', '')
@@ -173,17 +164,15 @@ def process_excel_data(df, signature_required):
         log_error(f"数据处理错误: {str(e)}")
         st.error(f"数据处理错误: {str(e)}")
 
-    # 构建最终行列表：007 + 空行 + 008
     final_rows = []
     final_rows.extend(rows_007)
-    if rows_007 and rows_008:   # 只有在两种系列都有数据时才插入空行
+    if rows_007 and rows_008:
         empty_row = {col: '' for col in column_order}
         final_rows.append(empty_row)
     final_rows.extend(rows_008)
 
     result_df = pd.DataFrame(final_rows)
     if not result_df.empty:
-        # 确保列顺序正确
         result_df = result_df[column_order]
     return result_df
 
@@ -203,7 +192,7 @@ def main():
     st.markdown("""
     ### 使用说明
     1. 上传从赛狐平台下载的Excel文件
-    2. 选择是否需要**签收服务**
+    2. 选择是否需要**签收服务**（默认勾选“是”）
     3. 系统自动处理：
        - **SKU映射规则**：WS007系列按映射表转换；WS008系列保留原始SKU
        - **订单排序**：007系列在上 → 空一行 → 008系列在下
@@ -213,7 +202,10 @@ def main():
     """)
 
     uploaded_file = st.file_uploader("选择要处理的Excel文件", type=["xlsx"])
+    
+    # 默认勾选签收服务
     signature_required = st.checkbox("要求签收服务 (Delivery Signature Required)", 
+                                     value=True,
                                      help="勾选后，输出文件的「Delivery Signature Required」列将填写 Yes")
 
     if uploaded_file is not None:
@@ -234,7 +226,7 @@ def main():
                 st.success(f"处理完成，生成 {len(processed_df)} 行数据（含空行）")
 
                 with st.expander("查看处理后的数据预览（007在上，空一行，008在下）"):
-                    st.dataframe(processed_df.head(20))  # 显示前20行以便观察
+                    st.dataframe(processed_df.head(20))
 
                 original_filename = uploaded_file.name
                 base_name = original_filename.split('.')[0]
