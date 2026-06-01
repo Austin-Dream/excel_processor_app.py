@@ -101,7 +101,7 @@ def split_address(address1, address2, door_number, max_length=35):
         return str(address1), ""
 
 def process_excel_data(df):
-    """处理在赛狐平台下载的数据，并自动添加店铺标识列（WF 1店 / WF 2店）"""
+    """处理在赛狐平台下载的数据，并根据SKU系列设置Retailer ID为WF 1店或WF 2店"""
     new_rows = []
     
     try:
@@ -120,20 +120,18 @@ def process_excel_data(df):
                 new_row = {}
                 suffix = f"-{i+1}" if quantity > 1 else ""
                 
-                # 1. 获取映射后的Part Number
+                # 获取映射后的Part Number
                 part_number = reverse_sku_mapping(row.get('SKU', ''))
                 
-                # 2. 根据Part Number确定店铺标识
-                store_name = ""
+                # 根据Part Number确定店铺标识，填入 Retailer ID
                 if part_number.startswith("WS007"):
-                    store_name = "WF 1店"
+                    retailer_id = "WF 1店"
                 elif part_number.startswith("WS008"):
-                    store_name = "WF 2店"
-                # 其他情况保持空字符串
+                    retailer_id = "WF 2店"
+                else:
+                    retailer_id = ""   # 其他情况留空
                 
-                # 3. 按顺序构建行数据（店铺列放在最前，最终列顺序会统一调整）
-                new_row['Store'] = store_name
-                new_row['Retailer ID'] = ''
+                new_row['Retailer ID'] = retailer_id
                 new_row['Retailer PO Number'] = f"{order_number}{suffix}"
                 new_row['Retailer Order Number'] = f"{order_number}{suffix}"
                 new_row['Recipient Order Number'] = ''
@@ -166,22 +164,7 @@ def process_excel_data(df):
         log_error(f"数据处理错误: {str(e)}")
         st.error(f"数据处理错误: {str(e)}")
     
-    # 构建DataFrame并统一列顺序（店铺列在第一列）
-    result_df = pd.DataFrame(new_rows)
-    if not result_df.empty:
-        # 定义所有列的标准顺序（确保输出整洁一致）
-        column_order = [
-            'Store', 'Retailer ID', 'Retailer PO Number', 'Retailer Order Number',
-            'Recipient Order Number', 'Part Number', 'Quantity', 'Fulfillment Warehouse ID',
-            'Shipping Account Number', 'SCAC Code', 'Ship Speed', 'Shipping Name',
-            'Shipping Address 1', 'Shipping Address 2', 'Shipping City', 'Shipping State',
-            'Shipping Postal Code', 'Shipping Country', 'Shipping Phone Number', 'Shipping Email'
-        ]
-        # 只保留实际存在的列（避免因异常缺失列而报错）
-        existing_columns = [col for col in column_order if col in result_df.columns]
-        result_df = result_df[existing_columns]
-    
-    return result_df
+    return pd.DataFrame(new_rows)
 
 def get_download_link(df, filename):
     """生成下载链接"""
@@ -203,7 +186,9 @@ def main():
     ### 使用说明
     1. 上传从赛狐平台下载的Excel文件
     2. 系统将自动处理数据并生成适用于WF系统的格式
-    3. **新增功能**：自动根据SKU系列区分店铺（007系列 → WF 1店，008系列 → WF 2店），并在输出文件第一列标识
+    3. **自动识别店铺**：根据SKU系列自动填写 `Retailer ID` 列  
+       - WS007系列 → WF 1店  
+       - WS008系列 → WF 2店  
     4. 处理完成后，下载生成的文件
     
     **注意：** 此工具仅适用于赛狐和WF多渠道对接
@@ -233,8 +218,8 @@ def main():
             else:
                 st.success(f"处理完成，生成 {len(processed_df)} 行数据")
                 
-                # 显示处理后的数据预览（包含店铺列）
-                with st.expander("查看处理后的数据预览（第一列为店铺标识）"):
+                # 显示处理后的数据预览
+                with st.expander("查看处理后的数据预览（注意 Retailer ID 列已根据系列填充）"):
                     st.dataframe(processed_df.head())
                 
                 # 生成下载链接
