@@ -224,7 +224,7 @@ def process_excel_data(df, signature_required):
                     'Shipping Address 2': addr2,
                     'Shipping City': row.get('城市', ''),
                     'Shipping State': row.get('州/省', ''),
-                    'Shipping Postal Code': row.get('邮编', ''),
+                    'Shipping Postal Code': row.get('邮编', ''),   # 此时已是字符串，前导零保留
                     'Shipping Country': 'US',
                     'Shipping Phone Number': format_phone_number(row.get('电话', '')),
                     'Shipping Email': 'tpcfjjyxgs@163.com'
@@ -265,14 +265,24 @@ def process_excel_data(df, signature_required):
         result_df = pd.concat([other_rows, data_rows], ignore_index=True)
     return result_df, date_str
 
+# ================== 修改点1：导出时强制邮编列为文本 ==================
 def get_download_link(df, filename):
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False)
+    # 使用 xlsxwriter 引擎以支持列格式设置
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Sheet1')
+        workbook = writer.book
+        worksheet = writer.sheets['Sheet1']
+        # 将 "Shipping Postal Code" 列设置为文本格式，防止 Excel 自动转换数字导致前导零丢失
+        if 'Shipping Postal Code' in df.columns:
+            col_idx = df.columns.get_loc('Shipping Postal Code')
+            cell_format = workbook.add_format({'num_format': '@'})
+            worksheet.set_column(col_idx, col_idx, None, cell_format)
     processed_data = output.getvalue()
     b64 = base64.b64encode(processed_data).decode()
     href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{filename}">点击下载处理后的文件</a>'
     return href
+# ================== 修改点1结束 ==================
 
 def main():
     st.title("赛狐文件和WF对接转化器")
@@ -312,7 +322,11 @@ def main():
     if uploaded_file is not None:
         try:
             st.info("正在读取文件...")
-            df = pd.read_excel(uploaded_file)
+            # ================== 修改点2：强制“邮编”列为字符串，避免前导零丢失 ==================
+            df = pd.read_excel(uploaded_file, dtype={'邮编': str})
+            if '邮编' in df.columns:
+                df['邮编'] = df['邮编'].fillna('').astype(str).str.strip()
+            # ================== 修改点2结束 ==================
             st.success(f"成功读取文件，共 {len(df)} 行数据")
             
             with st.expander("查看原始数据预览"):
@@ -371,23 +385,17 @@ def main():
                 if new_records:
                     if force_overwrite:
                         # 强制模式：需要移除旧记录中本次涉及的订单，再全部重新保存
-                        # 获取旧记录中不包含本次订单的剩余部分
                         current_set = load_processed_orders()
                         to_remove = {(order, sku) for order, sku, _ in new_records}
                         remaining = current_set - to_remove
-                        # 构建全部新记录（剩余+本次）
                         all_records = []
                         for order, sku in remaining:
-                            # 需要从历史文件中找回原文件信息？为了简单，我们只保存订单和SKU，处理时间重新写入当前时间
-                            # 但这样会丢失原处理时间。更好的办法：全量重写文件
                             all_records.append((order, sku, "历史记录"))
                         for order, sku, src in new_records:
                             all_records.append((order, sku, src))
-                        # 覆盖写入
                         save_processed_orders(all_records, mode='w')
                         st.info(f"已更新记录：覆盖了 {len(to_remove)} 个订单，新增了 {len(new_records)} 个订单。")
                     else:
-                        # 正常追加
                         save_processed_orders(new_records, mode='a')
                         st.success(f"已将 {len(new_records)} 个新订单加入处理记录，下次上传将自动跳过。")
                 else:
