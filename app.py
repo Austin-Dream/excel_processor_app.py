@@ -11,7 +11,7 @@ from datetime import datetime
 
 st.set_page_config(page_title="赛狐文件和WF对接转化器", page_icon="📊", layout="wide")
 
-# 固定的SKU映射表（仅用于WS007系列）
+# 固定的SKU映射表
 SKU_MAPPING = {
     "WS007-137-10": "WS007-26-FULL",
     "WS007-137-12": "WS007-30-FULL",
@@ -24,7 +24,6 @@ SKU_MAPPING = {
     "WS007-192-14": "WS007-35-KING",
     "WS007-99-12": "WS007-30-TWIN",
     "WS007-99-14": "WS007-35-TWIN",
-    # WS008映射已废弃，直接使用原始SKU
     "WS008-137-10": "WS008-26-FULL",
     "WS008-137-12": "WS008-30-FULL",
     "WS008-137-14": "WS008-35-FULL",
@@ -39,11 +38,50 @@ SKU_MAPPING = {
 }
 
 PROCESSED_LOG_FILE = "processed_orders.csv"
+ERROR_LOG_FILE = "error_log.txt"
 
 def log_error(error_msg):
-    with open("error_log.txt", "a") as f:
-        f.write(f"{pd.Timestamp.now()}: {error_msg}\n")
+    """写入本地错误日志（仅本地持久，Streamlit Cloud 重启丢失）"""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    full_msg = f"{timestamp}: {error_msg}"
+    with open(ERROR_LOG_FILE, "a", encoding='utf-8') as f:
+        f.write(full_msg + "\n")
 
+def load_processed_orders():
+    """从本地CSV加载处理记录（仅本地持久）"""
+    if not os.path.exists(PROCESSED_LOG_FILE):
+        return set()
+    processed = set()
+    try:
+        with open(PROCESSED_LOG_FILE, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                processed.add((row['order_number'], row['sku']))
+    except Exception as e:
+        st.error(f"读取处理记录失败: {e}")
+    return processed
+
+def save_processed_orders(new_records, mode='a'):
+    """追加或覆盖处理记录"""
+    file_exists = os.path.exists(PROCESSED_LOG_FILE)
+    with open(PROCESSED_LOG_FILE, mode, newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        if not file_exists or mode == 'w':
+            writer.writerow(['order_number', 'sku', 'processed_at', 'source_file'])
+        for order, sku, src_file in new_records:
+            writer.writerow([order, sku, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), src_file])
+
+def clear_all_records():
+    if os.path.exists(PROCESSED_LOG_FILE):
+        os.remove(PROCESSED_LOG_FILE)
+        st.success("已清空处理记录")
+
+def get_processed_records_df():
+    if not os.path.exists(PROCESSED_LOG_FILE):
+        return pd.DataFrame()
+    return pd.read_csv(PROCESSED_LOG_FILE)
+
+# ----- 以下是您的原有业务函数（保持不变）-----
 def get_part_number(original_sku):
     try:
         if pd.isna(original_sku):
@@ -96,7 +134,6 @@ def split_address(address1, address2, door_number, max_length=35):
         return str(address1), ""
 
 def consolidate_orders(df):
-    """单文件内合并重复订单行（同一订单号+同一SKU）"""
     required_cols = ['订单号', 'SKU', 'SKU数量', '收件人', '地址1', '地址2', '门牌号', '城市', '州/省', '邮编', '电话']
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
@@ -125,32 +162,7 @@ def consolidate_orders(df):
         st.warning(f"⚠️ 文件内合并：原数据 {original_rows} 行，按订单号+SKU合并后 {len(grouped)} 行，合并了 {merged_rows} 行（数量已累加）。")
     return grouped
 
-def load_processed_orders():
-    """加载历史处理记录，返回 set of (订单号, SKU)"""
-    if not os.path.exists(PROCESSED_LOG_FILE):
-        return set()
-    processed = set()
-    try:
-        with open(PROCESSED_LOG_FILE, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                processed.add((row['order_number'], row['sku']))
-    except Exception as e:
-        st.error(f"读取处理记录失败: {e}")
-    return processed
-
-def save_processed_orders(new_records, mode='a'):
-    """追加新记录，mode='w' 会覆盖文件并写入表头"""
-    file_exists = os.path.exists(PROCESSED_LOG_FILE)
-    with open(PROCESSED_LOG_FILE, mode, newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        if not file_exists or mode == 'w':
-            writer.writerow(['order_number', 'sku', 'processed_at', 'source_file'])
-        for order, sku, src_file in new_records:
-            writer.writerow([order, sku, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), src_file])
-
 def check_duplicate_orders(df, processed_set):
-    """检查当前 df 中哪些订单已处理过，返回 (重复列表, 新订单DataFrame)"""
     duplicates = []
     new_indices = []
     for idx, row in df.iterrows():
@@ -169,10 +181,7 @@ def check_duplicate_orders(df, processed_set):
     return duplicates, new_df
 
 def process_excel_data(df, signature_required):
-    """处理赛狐数据，生成WF多渠道格式（已包含文件内合并，不包含跨文件去重）"""
-    # 文件内合并
     df = consolidate_orders(df)
-    
     rows_007 = []
     rows_008 = []
     column_order = [
@@ -182,7 +191,6 @@ def process_excel_data(df, signature_required):
         'Shipping Address 1', 'Shipping Address 2', 'Shipping City', 'Shipping State',
         'Shipping Postal Code', 'Shipping Country', 'Shipping Phone Number', 'Shipping Email'
     ]
-    
     try:
         for _, row in df.iterrows():
             if pd.isna(row.get('SKU')) or row.get('SKU数量', 0) == 0:
@@ -224,7 +232,7 @@ def process_excel_data(df, signature_required):
                     'Shipping Address 2': addr2,
                     'Shipping City': row.get('城市', ''),
                     'Shipping State': row.get('州/省', ''),
-                    'Shipping Postal Code': row.get('邮编', ''),   # 此时已是字符串，前导零保留
+                    'Shipping Postal Code': row.get('邮编', ''),
                     'Shipping Country': 'US',
                     'Shipping Phone Number': format_phone_number(row.get('电话', '')),
                     'Shipping Email': 'tpcfjjyxgs@163.com'
@@ -245,7 +253,6 @@ def process_excel_data(df, signature_required):
     
     header_row = {col: '' for col in column_order}
     header_row['Retailer PO Number'] = date_str
-    
     final_rows = []
     final_rows.append(header_row)
     final_rows.extend(rows_007)
@@ -257,7 +264,6 @@ def process_excel_data(df, signature_required):
     result_df = pd.DataFrame(final_rows)
     if not result_df.empty:
         result_df = result_df[column_order]
-        # 二次去重（基于PO+PartNumber）
         mask = ~result_df['Retailer PO Number'].isin([date_str, ''])
         data_rows = result_df[mask]
         other_rows = result_df[~mask]
@@ -265,15 +271,12 @@ def process_excel_data(df, signature_required):
         result_df = pd.concat([other_rows, data_rows], ignore_index=True)
     return result_df, date_str
 
-# ================== 修改点1：导出时强制邮编列为文本 ==================
 def get_download_link(df, filename):
     output = io.BytesIO()
-    # 使用 xlsxwriter 引擎以支持列格式设置
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Sheet1')
         workbook = writer.book
         worksheet = writer.sheets['Sheet1']
-        # 将 "Shipping Postal Code" 列设置为文本格式，防止 Excel 自动转换数字导致前导零丢失
         if 'Shipping Postal Code' in df.columns:
             col_idx = df.columns.get_loc('Shipping Postal Code')
             cell_format = workbook.add_format({'num_format': '@'})
@@ -282,18 +285,25 @@ def get_download_link(df, filename):
     b64 = base64.b64encode(processed_data).decode()
     href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{filename}">点击下载处理后的文件</a>'
     return href
-# ================== 修改点1结束 ==================
 
+# ---------- 主函数 ----------
 def main():
     st.title("赛狐文件和WF对接转化器")
     st.markdown("---")
     
+    # 提醒本地存储的局限性
+    st.warning("""
+    ⚠️ **注意**：当前使用本地文件存储处理记录和错误日志。  
+    若您将此应用部署在 **Streamlit Cloud** 上，每次应用重启（部署更新、空闲唤醒）时，本地文件会被重置，**历史数据将丢失**。  
+    如需持久化，请考虑使用外部数据库（如 Supabase、MongoDB）或自行部署到有持久化磁盘的服务器。
+    """)
+    
     st.markdown("""
     ### 使用说明
     1. 上传从赛狐平台下载的Excel文件
-    2. 选择是否需要**签收服务**（默认勾选“是”）
+    2. 选择是否需要**签收服务**（默认关闭）
     3. 系统自动处理：
-       - **跨文件防重复**：记录已处理的订单（订单号+SKU），避免重复发货
+       - **跨文件防重复**：记录已处理的订单（订单号+SKU），避免重复发货（仅限本地运行有效）
        - **文件内合并**：同一订单号+同一SKU自动合并数量
        - **SKU映射**：WS007系列按映射表转换；WS008系列保留原始SKU
        - **订单排序**：顶部日期行 → 007系列 → 空行 → 008系列
@@ -301,38 +311,46 @@ def main():
     """)
     
     uploaded_file = st.file_uploader("选择要处理的Excel文件", type=["xlsx"])
-    signature_required = st.checkbox("要求签收服务 (Delivery Signature Required)", value=True)
+    # 签收服务默认改为 False
+    signature_required = st.checkbox("要求签收服务 (Delivery Signature Required)", value=False)
     
-    # 侧边栏：管理记录
     with st.sidebar:
         st.header("历史记录管理")
         if st.button("清空所有处理记录"):
-            if os.path.exists(PROCESSED_LOG_FILE):
-                os.remove(PROCESSED_LOG_FILE)
-                st.success("已清空所有历史记录，下次上传将重新处理所有订单。")
-            else:
-                st.info("记录文件不存在，无需清空。")
+            clear_all_records()
+            st.rerun()
         if st.button("下载当前记录文件"):
-            if os.path.exists(PROCESSED_LOG_FILE):
-                with open(PROCESSED_LOG_FILE, "rb") as f:
-                    st.download_button("点击下载", f, file_name=PROCESSED_LOG_FILE)
+            df_records = get_processed_records_df()
+            if not df_records.empty:
+                csv = df_records.to_csv(index=False).encode('utf-8')
+                st.download_button("点击下载", csv, file_name="processed_orders.csv", mime="text/csv")
             else:
-                st.info("暂无记录文件。")
+                st.info("暂无记录。")
+        st.markdown("---")
+        st.header("错误日志")
+        if os.path.exists(ERROR_LOG_FILE):
+            with open(ERROR_LOG_FILE, "r", encoding='utf-8') as f:
+                log_content = f.read()
+            with st.expander("查看日志"):
+                st.text(log_content[-2000:])  # 显示末尾部分
+            st.download_button(
+                label="下载完整日志",
+                data=log_content,
+                file_name=f"error_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            )
+        else:
+            st.info("暂无错误日志")
     
     if uploaded_file is not None:
         try:
             st.info("正在读取文件...")
-            # ================== 修改点2：强制“邮编”列为字符串，避免前导零丢失 ==================
             df = pd.read_excel(uploaded_file, dtype={'邮编': str})
             if '邮编' in df.columns:
                 df['邮编'] = df['邮编'].fillna('').astype(str).str.strip()
-            # ================== 修改点2结束 ==================
             st.success(f"成功读取文件，共 {len(df)} 行数据")
-            
             with st.expander("查看原始数据预览"):
                 st.dataframe(df.head())
             
-            # 加载历史记录
             processed_set = load_processed_orders()
             duplicates, new_df = check_duplicate_orders(df, processed_set)
             
@@ -340,7 +358,6 @@ def main():
                 st.warning(f"发现 {len(duplicates)} 个已处理过的订单（订单号+SKU组合）")
                 dup_preview = pd.DataFrame([{'订单号': d['order_number'], 'SKU': d['sku']} for d in duplicates])
                 st.dataframe(dup_preview)
-                
                 action = st.radio(
                     "请选择对重复订单的处理方式：",
                     ("跳过重复订单（推荐）", "强制重新处理（会覆盖旧记录，慎用！可能造成重复发货）"),
@@ -373,7 +390,6 @@ def main():
                 with st.expander("查看处理后的数据预览"):
                     st.dataframe(processed_df.head(20))
                 
-                # 准备记录本次新处理的订单（基于 df_to_process，因为已经过滤了重复）
                 new_records = []
                 for _, row in df_to_process.iterrows():
                     order = str(row.get('订单号', ''))
@@ -381,27 +397,26 @@ def main():
                     if order and sku:
                         new_records.append((order, sku, uploaded_file.name))
                 
-                # 保存记录
                 if new_records:
                     if force_overwrite:
-                        # 强制模式：需要移除旧记录中本次涉及的订单，再全部重新保存
-                        current_set = load_processed_orders()
+                        # 强制覆盖：先删除这些订单的旧记录（从文件中移除）
+                        existing = load_processed_orders()
                         to_remove = {(order, sku) for order, sku, _ in new_records}
-                        remaining = current_set - to_remove
+                        remaining = existing - to_remove
+                        # 重新写入全部记录
                         all_records = []
                         for order, sku in remaining:
                             all_records.append((order, sku, "历史记录"))
                         for order, sku, src in new_records:
                             all_records.append((order, sku, src))
                         save_processed_orders(all_records, mode='w')
-                        st.info(f"已更新记录：覆盖了 {len(to_remove)} 个订单，新增了 {len(new_records)} 个订单。")
+                        st.info(f"已更新记录：覆盖了 {len(to_remove)} 个订单。")
                     else:
                         save_processed_orders(new_records, mode='a')
                         st.success(f"已将 {len(new_records)} 个新订单加入处理记录，下次上传将自动跳过。")
                 else:
                     st.info("本次无新订单产生，未更新记录。")
                 
-                # 下载文件
                 original_filename = uploaded_file.name
                 base_name = original_filename.split('.')[0]
                 download_filename = f"{base_name}_处理结果.xlsx"
@@ -414,7 +429,7 @@ def main():
             log_error(f"处理出错: {str(e)}\n{traceback.format_exc()}")
     
     st.markdown("---")
-    st.markdown("如有问题，请检查错误日志文件或联系开发人员")
+    st.markdown("如有问题，请检查错误日志或联系开发人员")
 
 if __name__ == "__main__":
     main()
