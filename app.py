@@ -16,7 +16,6 @@ st.set_page_config(page_title="赛狐文件和WF对接转化器", page_icon="�
 # 值：Wayfair标准SKU（必须完全匹配Wayfair系统）
 WAYFAIR_SKU_MAPPING = {
     # ===== WF-1店 (Retailer ID: 33054) - 007系列 =====
-    # 赛狐SKU → Wayfair标准SKU
     "WS007-99-12": "WS007-30-TWIN",
     "WS007-99-14": "WS007-35-TWIN",
     "WS007-137-12": "WS007-30-FULL",
@@ -34,7 +33,7 @@ WAYFAIR_SKU_MAPPING = {
     "WS007-152-14B": "WS007-35-QUEEN",
     "WS007-192-12B": "WS007-30-KING",
     "WS007-192-14B": "WS007-35-KING",
-    # 不带WS前缀的情况（如果赛狐直接导出为007-137-12）
+    # 不带WS前缀
     "007-99-12": "WS007-30-TWIN",
     "007-99-14": "WS007-35-TWIN",
     "007-137-12": "WS007-30-FULL",
@@ -61,7 +60,7 @@ WAYFAIR_SKU_MAPPING = {
     "WS008-152-14": "WS008-152-14",
     "WS008-192-12": "WS008-192-12",
     "WS008-192-14": "WS008-192-14",
-    # 带B后缀的变体（去掉B）
+    # 带B后缀的变体
     "WS008-99-12B": "WS008-99-12",
     "WS008-137-12B": "WS008-137-12",
     "WS008-137-14B": "WS008-137-14",
@@ -177,31 +176,25 @@ def get_part_number(original_sku):
             return WAYFAIR_SKU_MAPPING[sku_str]
         
         # 尝试标准化格式：WS006-137-12B -> 006-137-12
-        # 匹配格式：[可选WS]系列-尺寸-厚度[可选字母]
         pattern = r'^WS?(\d{3})-(\d{3})-(\d{2})[A-Z]*$'
         match = re.match(pattern, sku_str)
         if match:
-            series = match.group(1)      # 006/007/008/009
-            size = match.group(2)        # 99/137/152/192
-            thickness = match.group(3)   # 12/14
+            series = match.group(1)
+            size = match.group(2)
+            thickness = match.group(3)
             
-            # 构建标准化的赛狐SKU格式（去掉后缀）
             standardized = f"{series}-{size}-{thickness}"
             
-            # 对于007和008，需要加WS前缀
             if series == "007":
                 standardized = f"WS{standardized}"
             elif series == "008":
                 standardized = f"WS{standardized}"
-            # 006和009保持原样
             
-            # 检查是否在映射表中
             if standardized in WAYFAIR_SKU_MAPPING:
                 return WAYFAIR_SKU_MAPPING[standardized]
             
-            # 对于007系列，检查尺寸映射（99->30, 137->30, 152->30, 192->30）
+            # 007系列的特殊映射：99->TWIN, 137->FULL, 152->QUEEN, 192->KING
             if series == "007":
-                # 构建Wayfair标准格式: WS007-{厚度}-{尺寸名称}
                 size_name = {
                     "99": "TWIN",
                     "137": "FULL",
@@ -215,7 +208,6 @@ def get_part_number(original_sku):
                     }.get(thickness)
                     if thickness_name:
                         wayfair_sku = f"WS007-{thickness_name}-{size_name}"
-                        # 验证是否在有效列表中
                         valid_skus = [
                             "WS007-30-TWIN", "WS007-35-TWIN",
                             "WS007-30-FULL", "WS007-35-FULL",
@@ -225,7 +217,7 @@ def get_part_number(original_sku):
                         if wayfair_sku in valid_skus:
                             return wayfair_sku
         
-        return None  # 无法映射
+        return None
         
     except Exception as e:
         log_error(f"SKU处理错误: {str(e)}")
@@ -344,6 +336,7 @@ def process_excel_data(df, signature_required):
     """
     处理赛狐数据，生成WF多渠道格式
     自动根据SKU分配Retailer ID
+    每个包裹只能包含1件商品，同一订单号多个包裹时自动加 -1, -2, -3 ...
     """
     # 文件内合并
     df = consolidate_orders(df)
@@ -364,6 +357,9 @@ def process_excel_data(df, signature_required):
     ]
     
     try:
+        # 用于跟踪每个订单号已经生成了几个包裹（按店铺分开）
+        order_counter = {}
+        
         for idx, row in df.iterrows():
             if pd.isna(row.get('SKU')) or row.get('SKU数量', 0) == 0:
                 continue
@@ -374,7 +370,6 @@ def process_excel_data(df, signature_required):
             wayfair_sku = get_part_number(original_sku)
             
             if not wayfair_sku:
-                # SKU无法映射，记录并跳过
                 skipped_rows.append({
                     '行号': idx + 2,
                     '原始SKU': original_sku,
@@ -393,12 +388,26 @@ def process_excel_data(df, signature_required):
                 })
                 continue
             
-            order_number = row.get('订单号', '')
+            order_number = str(row.get('订单号', '')).strip()
             quantity = int(row.get('SKU数量', 1))
             delivery_signature = "Yes" if signature_required else ""
             
+            # 获取该订单号当前的计数（按店铺分别计数）
+            counter_key = f"{retailer_id}_{order_number}"
+            if counter_key not in order_counter:
+                order_counter[counter_key] = 0
+            
+            # ===== 关键修改：每个SKU的每1件商品生成1条记录 =====
             for i in range(quantity):
-                suffix = f"-{i+1}" if quantity > 1 else ""
+                order_counter[counter_key] += 1
+                package_num = order_counter[counter_key]
+                
+                # 生成带序号的订单号
+                if package_num == 1:
+                    po_number = order_number
+                else:
+                    po_number = f"{order_number}-{package_num}"
+                
                 addr1, addr2 = split_address(
                     row.get('地址1', ''),
                     row.get('地址2', ''),
@@ -407,11 +416,11 @@ def process_excel_data(df, signature_required):
                 
                 new_row = {
                     'Retailer ID': retailer_id,
-                    'Retailer PO Number': f"{order_number}{suffix}",
-                    'Retailer Order Number': f"{order_number}{suffix}",
+                    'Retailer PO Number': po_number,
+                    'Retailer Order Number': po_number,
                     'Recipient Order Number': '',
                     'Part Number': wayfair_sku,
-                    'Quantity': 1,
+                    'Quantity': 1,  # 每个包裹只有1件
                     'Fulfillment Warehouse ID': '',
                     'Shipping Account Number': '',
                     'SCAC Code': '',
@@ -448,7 +457,7 @@ def process_excel_data(df, signature_required):
                 "35369": "WF-2店 (008系列)",
                 "43682": "WF-3店 (006/009系列)"
             }.get(retailer_id, retailer_id)
-            st.info(f"📦 {store_name}: {len(rows)} 条订单")
+            st.info(f"📦 {store_name}: {len(rows)} 条包裹")
     
     # 添加日期行
     today = datetime.now()
@@ -504,10 +513,11 @@ def main():
     st.markdown("""
     ### 使用说明
     1. 上传从赛狐平台下载的Excel文件
-    2. 选择是否需要**签收服务**（默认勾选"是"）
+    2. 选择是否需要**签收服务**（默认不勾选）
     3. 系统自动处理：
        - **SKU智能映射**：自动将赛狐SKU转换为Wayfair标准SKU
        - **自动分配店铺**：根据SKU自动分配Retailer ID
+       - **自动拆包**：每件商品独立成一个包裹，订单号自动加 -1, -2, -3...
        - **跨文件防重复**：记录已处理的订单
        - **文件内合并**：同一订单号+同一SKU自动合并数量
        - **无效SKU提示**：无法映射的SKU会显示并跳过
@@ -515,7 +525,7 @@ def main():
     """)
     
     uploaded_file = st.file_uploader("选择要处理的Excel文件", type=["xlsx"])
-    signature_required = st.checkbox("要求签收服务 (Delivery Signature Required)", value=True)
+    signature_required = st.checkbox("要求签收服务 (Delivery Signature Required)", value=False)
     
     # 侧边栏
     with st.sidebar:
@@ -538,6 +548,15 @@ def main():
         st.markdown("- WF-1店 (007系列): `33054`")
         st.markdown("- WF-2店 (008系列): `35369`")
         st.markdown("- WF-3店 (006/009系列): `43682`")
+        
+        st.markdown("---")
+        st.markdown("### 拆包规则")
+        st.markdown("每个包裹只能包含 **1件商品**")
+        st.markdown("同一订单号多个包裹时：")
+        st.markdown("- 第1个包裹: `订单号`")
+        st.markdown("- 第2个包裹: `订单号-2`")
+        st.markdown("- 第3个包裹: `订单号-3`")
+        st.markdown("...以此类推")
     
     if uploaded_file is not None:
         try:
@@ -588,7 +607,7 @@ def main():
                 st.error("处理完成，但没有生成有效数据，请检查原始文件格式")
             else:
                 total_rows = len(processed_df) - 1
-                st.success(f"处理完成，生成 {total_rows} 条订单数据")
+                st.success(f"处理完成，生成 {total_rows} 条包裹数据")
                 if skipped_count > 0:
                     st.warning(f"⚠️ 跳过 {skipped_count} 个无法映射的SKU")
                 
@@ -630,7 +649,7 @@ def main():
                 
                 # 显示按Retailer ID分类的统计
                 st.markdown("---")
-                st.markdown("### 📊 订单统计")
+                st.markdown("### 📊 包裹统计")
                 for retailer_id in ["33054", "35369", "43682"]:
                     count = len(processed_df[processed_df['Retailer ID'] == retailer_id])
                     if count > 0:
@@ -639,7 +658,7 @@ def main():
                             "35369": "WF-2店 (008系列)",
                             "43682": "WF-3店 (006/009系列)"
                         }.get(retailer_id, retailer_id)
-                        st.info(f"**{store_name}** (Retailer ID: {retailer_id}): {count} 条订单")
+                        st.info(f"**{store_name}** (Retailer ID: {retailer_id}): {count} 个包裹")
                 
         except Exception as e:
             st.error(f"处理出错: {str(e)}")
