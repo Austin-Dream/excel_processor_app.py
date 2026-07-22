@@ -11,91 +11,225 @@ from datetime import datetime
 
 st.set_page_config(page_title="赛狐文件和WF对接转化器", page_icon="📊", layout="wide")
 
-# 固定的SKU映射表
-SKU_MAPPING = {
-    "WS007-137-10": "WS007-26-FULL",
-    "WS007-137-12": "WS007-30-FULL",
-    "WS007-137-14": "WS007-35-FULL",
-    "WS007-152-10": "WS007-26-QUEEN",
-    "WS007-152-12": "WS007-30-QUEEN",
-    "WS007-152-14": "WS007-35-QUEEN",
-    "WS007-192-10": "WS007-26-KING",
-    "WS007-192-12": "WS007-30-KING",
-    "WS007-192-14": "WS007-35-KING",
+# ==================== 完整的Wayfair SKU映射表 ====================
+# 键：赛狐原始SKU（从Excel读取的SKU）
+# 值：Wayfair标准SKU（必须完全匹配Wayfair系统）
+WAYFAIR_SKU_MAPPING = {
+    # ===== WF-1店 (Retailer ID: 33054) - 007系列 =====
+    # 赛狐SKU → Wayfair标准SKU
     "WS007-99-12": "WS007-30-TWIN",
     "WS007-99-14": "WS007-35-TWIN",
-    "WS008-137-10": "WS008-26-FULL",
-    "WS008-137-12": "WS008-30-FULL",
-    "WS008-137-14": "WS008-35-FULL",
-    "WS008-152-10": "WS008-26-QUEEN",
-    "WS008-152-12": "WS008-30-QUEEN",
-    "WS008-152-14": "WS008-35-QUEEN",
-    "WS008-192-10": "WS008-26-KING",
-    "WS008-192-12": "WS008-30-KING",
-    "WS008-192-14": "WS008-35-KING",
-    "WS008-99-12": "WS008-30-TWIN",
-    "WS008-99-14": "WS008-35-TWIN"
+    "WS007-137-12": "WS007-30-FULL",
+    "WS007-137-14": "WS007-35-FULL",
+    "WS007-152-12": "WS007-30-QUEEN",
+    "WS007-152-14": "WS007-35-QUEEN",
+    "WS007-192-12": "WS007-30-KING",
+    "WS007-192-14": "WS007-35-KING",
+    # 带B后缀的变体
+    "WS007-99-12B": "WS007-30-TWIN",
+    "WS007-99-14B": "WS007-35-TWIN",
+    "WS007-137-12B": "WS007-30-FULL",
+    "WS007-137-14B": "WS007-35-FULL",
+    "WS007-152-12B": "WS007-30-QUEEN",
+    "WS007-152-14B": "WS007-35-QUEEN",
+    "WS007-192-12B": "WS007-30-KING",
+    "WS007-192-14B": "WS007-35-KING",
+    # 不带WS前缀的情况（如果赛狐直接导出为007-137-12）
+    "007-99-12": "WS007-30-TWIN",
+    "007-99-14": "WS007-35-TWIN",
+    "007-137-12": "WS007-30-FULL",
+    "007-137-14": "WS007-35-FULL",
+    "007-152-12": "WS007-30-QUEEN",
+    "007-152-14": "WS007-35-QUEEN",
+    "007-192-12": "WS007-30-KING",
+    "007-192-14": "WS007-35-KING",
+    # 带B后缀且不带WS前缀
+    "007-99-12B": "WS007-30-TWIN",
+    "007-99-14B": "WS007-35-TWIN",
+    "007-137-12B": "WS007-30-FULL",
+    "007-137-14B": "WS007-35-FULL",
+    "007-152-12B": "WS007-30-QUEEN",
+    "007-152-14B": "WS007-35-QUEEN",
+    "007-192-12B": "WS007-30-KING",
+    "007-192-14B": "WS007-35-KING",
+    
+    # ===== WF-2店 (Retailer ID: 35369) - 008系列 =====
+    "WS008-99-12": "WS008-99-12",
+    "WS008-137-12": "WS008-137-12",
+    "WS008-137-14": "WS008-137-14",
+    "WS008-152-12": "WS008-152-12",
+    "WS008-152-14": "WS008-152-14",
+    "WS008-192-12": "WS008-192-12",
+    "WS008-192-14": "WS008-192-14",
+    # 带B后缀的变体（去掉B）
+    "WS008-99-12B": "WS008-99-12",
+    "WS008-137-12B": "WS008-137-12",
+    "WS008-137-14B": "WS008-137-14",
+    "WS008-152-12B": "WS008-152-12",
+    "WS008-152-14B": "WS008-152-14",
+    "WS008-192-12B": "WS008-192-12",
+    "WS008-192-14B": "WS008-192-14",
+    # 不带WS前缀
+    "008-99-12": "WS008-99-12",
+    "008-137-12": "WS008-137-12",
+    "008-137-14": "WS008-137-14",
+    "008-152-12": "WS008-152-12",
+    "008-152-14": "WS008-152-14",
+    "008-192-12": "WS008-192-12",
+    "008-192-14": "WS008-192-14",
+    # 带B后缀且不带WS前缀
+    "008-99-12B": "WS008-99-12",
+    "008-137-12B": "WS008-137-12",
+    "008-137-14B": "WS008-137-14",
+    "008-152-12B": "WS008-152-12",
+    "008-152-14B": "WS008-152-14",
+    "008-192-12B": "WS008-192-12",
+    "008-192-14B": "WS008-192-14",
+    
+    # ===== WF-3店 (Retailer ID: 43682) - 006系列 =====
+    "WS006-137-12": "006-137-12",
+    "WS006-137-12B": "006-137-12",
+    "WS006-137-14": "006-137-14",
+    "WS006-137-14B": "006-137-14",
+    "WS006-152-12": "006-152-12",
+    "WS006-152-12B": "006-152-12",
+    "WS006-152-14": "006-152-14",
+    "WS006-152-14B": "006-152-14",
+    "WS006-192-12": "006-192-12",
+    "WS006-192-12B": "006-192-12",
+    "WS006-192-14": "006-192-14",
+    "WS006-192-14B": "006-192-14",
+    # 不带WS前缀
+    "006-137-12": "006-137-12",
+    "006-137-12B": "006-137-12",
+    "006-137-14": "006-137-14",
+    "006-137-14B": "006-137-14",
+    "006-152-12": "006-152-12",
+    "006-152-12B": "006-152-12",
+    "006-152-14": "006-152-14",
+    "006-152-14B": "006-152-14",
+    "006-192-12": "006-192-12",
+    "006-192-12B": "006-192-12",
+    "006-192-14": "006-192-14",
+    "006-192-14B": "006-192-14",
+    
+    # ===== WF-3店 (Retailer ID: 43682) - 009系列 =====
+    "WS009-137-12": "009-137-12",
+    "WS009-137-12B": "009-137-12",
+    "WS009-137-14": "009-137-14",
+    "WS009-137-14B": "009-137-14",
+    "WS009-152-12": "009-152-12",
+    "WS009-152-12B": "009-152-12",
+    "WS009-152-14": "009-152-14",
+    "WS009-152-14B": "009-152-14",
+    "WS009-192-12": "009-192-12",
+    "WS009-192-12B": "009-192-12",
+    "WS009-192-14": "009-192-14",
+    "WS009-192-14B": "009-192-14",
+    # 不带WS前缀
+    "009-137-12": "009-137-12",
+    "009-137-12B": "009-137-12",
+    "009-137-14": "009-137-14",
+    "009-137-14B": "009-137-14",
+    "009-152-12": "009-152-12",
+    "009-152-12B": "009-152-12",
+    "009-152-14": "009-152-14",
+    "009-152-14B": "009-152-14",
+    "009-192-12": "009-192-12",
+    "009-192-12B": "009-192-12",
+    "009-192-14": "009-192-14",
+    "009-192-14B": "009-192-14",
 }
 
+# ==================== Retailer ID 映射 ====================
+def get_retailer_id(wayfair_sku):
+    """
+    根据Wayfair标准SKU自动判断属于哪个店铺
+    """
+    if wayfair_sku.startswith("WS007"):
+        return "33054"  # WF-1店
+    elif wayfair_sku.startswith("WS008"):
+        return "35369"  # WF-2店
+    elif wayfair_sku.startswith("006") or wayfair_sku.startswith("009"):
+        return "43682"  # WF-3店
+    else:
+        return None
+
 PROCESSED_LOG_FILE = "processed_orders.csv"
-ERROR_LOG_FILE = "error_log.txt"
 
 def log_error(error_msg):
-    """写入本地错误日志（仅本地持久，Streamlit Cloud 重启丢失）"""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    full_msg = f"{timestamp}: {error_msg}"
-    with open(ERROR_LOG_FILE, "a", encoding='utf-8') as f:
-        f.write(full_msg + "\n")
+    with open("error_log.txt", "a") as f:
+        f.write(f"{pd.Timestamp.now()}: {error_msg}\n")
 
-def load_processed_orders():
-    """从本地CSV加载处理记录（仅本地持久）"""
-    if not os.path.exists(PROCESSED_LOG_FILE):
-        return set()
-    processed = set()
-    try:
-        with open(PROCESSED_LOG_FILE, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                processed.add((row['order_number'], row['sku']))
-    except Exception as e:
-        st.error(f"读取处理记录失败: {e}")
-    return processed
-
-def save_processed_orders(new_records, mode='a'):
-    """追加或覆盖处理记录"""
-    file_exists = os.path.exists(PROCESSED_LOG_FILE)
-    with open(PROCESSED_LOG_FILE, mode, newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        if not file_exists or mode == 'w':
-            writer.writerow(['order_number', 'sku', 'processed_at', 'source_file'])
-        for order, sku, src_file in new_records:
-            writer.writerow([order, sku, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), src_file])
-
-def clear_all_records():
-    if os.path.exists(PROCESSED_LOG_FILE):
-        os.remove(PROCESSED_LOG_FILE)
-        st.success("已清空处理记录")
-
-def get_processed_records_df():
-    if not os.path.exists(PROCESSED_LOG_FILE):
-        return pd.DataFrame()
-    return pd.read_csv(PROCESSED_LOG_FILE)
-
-# ----- 以下是您的原有业务函数（保持不变）-----
 def get_part_number(original_sku):
+    """
+    将赛狐SKU转换为Wayfair标准SKU
+    如果无法映射，返回None
+    """
     try:
         if pd.isna(original_sku):
-            return ""
-        sku_str = str(original_sku).strip()
-        if sku_str.startswith("WS007"):
-            return SKU_MAPPING.get(sku_str, sku_str)
-        elif sku_str.startswith("WS008"):
-            return sku_str
-        else:
-            return sku_str
+            return None
+        
+        sku_str = str(original_sku).strip().upper()
+        
+        # 直接查找映射表
+        if sku_str in WAYFAIR_SKU_MAPPING:
+            return WAYFAIR_SKU_MAPPING[sku_str]
+        
+        # 尝试标准化格式：WS006-137-12B -> 006-137-12
+        # 匹配格式：[可选WS]系列-尺寸-厚度[可选字母]
+        pattern = r'^WS?(\d{3})-(\d{3})-(\d{2})[A-Z]*$'
+        match = re.match(pattern, sku_str)
+        if match:
+            series = match.group(1)      # 006/007/008/009
+            size = match.group(2)        # 99/137/152/192
+            thickness = match.group(3)   # 12/14
+            
+            # 构建标准化的赛狐SKU格式（去掉后缀）
+            standardized = f"{series}-{size}-{thickness}"
+            
+            # 对于007和008，需要加WS前缀
+            if series == "007":
+                standardized = f"WS{standardized}"
+            elif series == "008":
+                standardized = f"WS{standardized}"
+            # 006和009保持原样
+            
+            # 检查是否在映射表中
+            if standardized in WAYFAIR_SKU_MAPPING:
+                return WAYFAIR_SKU_MAPPING[standardized]
+            
+            # 对于007系列，检查尺寸映射（99->30, 137->30, 152->30, 192->30）
+            if series == "007":
+                # 构建Wayfair标准格式: WS007-{厚度}-{尺寸名称}
+                size_name = {
+                    "99": "TWIN",
+                    "137": "FULL",
+                    "152": "QUEEN",
+                    "192": "KING"
+                }.get(size)
+                if size_name:
+                    thickness_name = {
+                        "12": "30",
+                        "14": "35"
+                    }.get(thickness)
+                    if thickness_name:
+                        wayfair_sku = f"WS007-{thickness_name}-{size_name}"
+                        # 验证是否在有效列表中
+                        valid_skus = [
+                            "WS007-30-TWIN", "WS007-35-TWIN",
+                            "WS007-30-FULL", "WS007-35-FULL",
+                            "WS007-30-QUEEN", "WS007-35-QUEEN",
+                            "WS007-30-KING", "WS007-35-KING"
+                        ]
+                        if wayfair_sku in valid_skus:
+                            return wayfair_sku
+        
+        return None  # 无法映射
+        
     except Exception as e:
         log_error(f"SKU处理错误: {str(e)}")
-        return str(original_sku)
+        return None
 
 def format_phone_number(phone_str):
     try:
@@ -134,6 +268,7 @@ def split_address(address1, address2, door_number, max_length=35):
         return str(address1), ""
 
 def consolidate_orders(df):
+    """单文件内合并重复订单行（同一订单号+同一SKU）"""
     required_cols = ['订单号', 'SKU', 'SKU数量', '收件人', '地址1', '地址2', '门牌号', '城市', '州/省', '邮编', '电话']
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
@@ -162,7 +297,32 @@ def consolidate_orders(df):
         st.warning(f"⚠️ 文件内合并：原数据 {original_rows} 行，按订单号+SKU合并后 {len(grouped)} 行，合并了 {merged_rows} 行（数量已累加）。")
     return grouped
 
+def load_processed_orders():
+    """加载历史处理记录"""
+    if not os.path.exists(PROCESSED_LOG_FILE):
+        return set()
+    processed = set()
+    try:
+        with open(PROCESSED_LOG_FILE, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                processed.add((row['order_number'], row['sku']))
+    except Exception as e:
+        st.error(f"读取处理记录失败: {e}")
+    return processed
+
+def save_processed_orders(new_records, mode='a'):
+    """追加新记录"""
+    file_exists = os.path.exists(PROCESSED_LOG_FILE)
+    with open(PROCESSED_LOG_FILE, mode, newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        if not file_exists or mode == 'w':
+            writer.writerow(['order_number', 'sku', 'processed_at', 'source_file'])
+        for order, sku, src_file in new_records:
+            writer.writerow([order, sku, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), src_file])
+
 def check_duplicate_orders(df, processed_set):
+    """检查重复订单"""
     duplicates = []
     new_indices = []
     for idx, row in df.iterrows():
@@ -181,9 +341,20 @@ def check_duplicate_orders(df, processed_set):
     return duplicates, new_df
 
 def process_excel_data(df, signature_required):
+    """
+    处理赛狐数据，生成WF多渠道格式
+    自动根据SKU分配Retailer ID
+    """
+    # 文件内合并
     df = consolidate_orders(df)
-    rows_007 = []
-    rows_008 = []
+    
+    rows_by_store = {
+        "33054": [],  # WF-1店
+        "35369": [],  # WF-2店
+        "43682": []   # WF-3店
+    }
+    
+    skipped_rows = []
     column_order = [
         'Retailer ID', 'Retailer PO Number', 'Retailer Order Number', 'Recipient Order Number',
         'Part Number', 'Quantity', 'Fulfillment Warehouse ID', 'Shipping Account Number',
@@ -191,23 +362,41 @@ def process_excel_data(df, signature_required):
         'Shipping Address 1', 'Shipping Address 2', 'Shipping City', 'Shipping State',
         'Shipping Postal Code', 'Shipping Country', 'Shipping Phone Number', 'Shipping Email'
     ]
+    
     try:
-        for _, row in df.iterrows():
+        for idx, row in df.iterrows():
             if pd.isna(row.get('SKU')) or row.get('SKU数量', 0) == 0:
                 continue
+            
             original_sku = row.get('SKU', '')
-            part_number = get_part_number(original_sku)
-            if part_number.startswith("WS007"):
-                retailer_id = "33054"
-                target_list = rows_007
-            elif part_number.startswith("WS008"):
-                retailer_id = "35369"
-                target_list = rows_008
-            else:
+            
+            # 转换为Wayfair标准SKU
+            wayfair_sku = get_part_number(original_sku)
+            
+            if not wayfair_sku:
+                # SKU无法映射，记录并跳过
+                skipped_rows.append({
+                    '行号': idx + 2,
+                    '原始SKU': original_sku,
+                    '原因': '无法匹配到Wayfair标准SKU'
+                })
                 continue
+            
+            # 根据Wayfair SKU自动获取Retailer ID
+            retailer_id = get_retailer_id(wayfair_sku)
+            
+            if not retailer_id:
+                skipped_rows.append({
+                    '行号': idx + 2,
+                    '原始SKU': original_sku,
+                    '原因': f'无法确定店铺 (SKU: {wayfair_sku})'
+                })
+                continue
+            
             order_number = row.get('订单号', '')
             quantity = int(row.get('SKU数量', 1))
             delivery_signature = "Yes" if signature_required else ""
+            
             for i in range(quantity):
                 suffix = f"-{i+1}" if quantity > 1 else ""
                 addr1, addr2 = split_address(
@@ -215,12 +404,13 @@ def process_excel_data(df, signature_required):
                     row.get('地址2', ''),
                     row.get('门牌号', '')
                 )
+                
                 new_row = {
                     'Retailer ID': retailer_id,
                     'Retailer PO Number': f"{order_number}{suffix}",
                     'Retailer Order Number': f"{order_number}{suffix}",
                     'Recipient Order Number': '',
-                    'Part Number': part_number,
+                    'Part Number': wayfair_sku,
                     'Quantity': 1,
                     'Fulfillment Warehouse ID': '',
                     'Shipping Account Number': '',
@@ -237,11 +427,30 @@ def process_excel_data(df, signature_required):
                     'Shipping Phone Number': format_phone_number(row.get('电话', '')),
                     'Shipping Email': 'tpcfjjyxgs@163.com'
                 }
-                target_list.append(new_row)
+                rows_by_store[retailer_id].append(new_row)
+                
     except Exception as e:
         log_error(f"数据处理错误: {str(e)}")
         st.error(f"数据处理错误: {str(e)}")
     
+    # 显示跳过的SKU
+    if skipped_rows:
+        st.warning(f"⚠️ 发现 {len(skipped_rows)} 个无法映射的SKU")
+        skipped_df = pd.DataFrame(skipped_rows)
+        st.dataframe(skipped_df)
+        st.info("这些订单已被跳过，不会生成发货文件。请检查SKU是否正确。")
+    
+    # 统计各店铺订单数
+    for retailer_id, rows in rows_by_store.items():
+        if rows:
+            store_name = {
+                "33054": "WF-1店 (007系列)",
+                "35369": "WF-2店 (008系列)",
+                "43682": "WF-3店 (006/009系列)"
+            }.get(retailer_id, retailer_id)
+            st.info(f"📦 {store_name}: {len(rows)} 条订单")
+    
+    # 添加日期行
     today = datetime.now()
     date_str = today.strftime("%-m月%-d日")
     if date_str.startswith("0"):
@@ -253,23 +462,25 @@ def process_excel_data(df, signature_required):
     
     header_row = {col: '' for col in column_order}
     header_row['Retailer PO Number'] = date_str
-    final_rows = []
-    final_rows.append(header_row)
-    final_rows.extend(rows_007)
-    if rows_007 and rows_008:
-        empty_row = {col: '' for col in column_order}
-        final_rows.append(empty_row)
-    final_rows.extend(rows_008)
+    
+    final_rows = [header_row]
+    
+    # 按店铺顺序添加数据（WF-1 -> WF-2 -> WF-3）
+    for retailer_id in ["33054", "35369", "43682"]:
+        if rows_by_store[retailer_id]:
+            final_rows.extend(rows_by_store[retailer_id])
     
     result_df = pd.DataFrame(final_rows)
     if not result_df.empty:
         result_df = result_df[column_order]
+        # 去重
         mask = ~result_df['Retailer PO Number'].isin([date_str, ''])
         data_rows = result_df[mask]
         other_rows = result_df[~mask]
         data_rows = data_rows.drop_duplicates(subset=['Retailer PO Number', 'Part Number'], keep='first')
         result_df = pd.concat([other_rows, data_rows], ignore_index=True)
-    return result_df, date_str
+    
+    return result_df, date_str, len(skipped_rows)
 
 def get_download_link(df, filename):
     output = io.BytesIO()
@@ -286,60 +497,47 @@ def get_download_link(df, filename):
     href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{filename}">点击下载处理后的文件</a>'
     return href
 
-# ---------- 主函数 ----------
 def main():
     st.title("赛狐文件和WF对接转化器")
     st.markdown("---")
     
-    # 提醒本地存储的局限性
-    st.warning("""
-    ⚠️ **注意**：当前使用本地文件存储处理记录和错误日志。  
-    若您将此应用部署在 **Streamlit Cloud** 上，每次应用重启（部署更新、空闲唤醒）时，本地文件会被重置，**历史数据将丢失**。  
-    如需持久化，请考虑使用外部数据库（如 Supabase、MongoDB）或自行部署到有持久化磁盘的服务器。
-    """)
-    
     st.markdown("""
     ### 使用说明
     1. 上传从赛狐平台下载的Excel文件
-    2. 选择是否需要**签收服务**（默认关闭）
+    2. 选择是否需要**签收服务**（默认勾选"是"）
     3. 系统自动处理：
-       - **跨文件防重复**：记录已处理的订单（订单号+SKU），避免重复发货（仅限本地运行有效）
+       - **SKU智能映射**：自动将赛狐SKU转换为Wayfair标准SKU
+       - **自动分配店铺**：根据SKU自动分配Retailer ID
+       - **跨文件防重复**：记录已处理的订单
        - **文件内合并**：同一订单号+同一SKU自动合并数量
-       - **SKU映射**：WS007系列按映射表转换；WS008系列保留原始SKU
-       - **订单排序**：顶部日期行 → 007系列 → 空行 → 008系列
-    4. 下载处理后的文件，可直接导入Wayfair系统
+       - **无效SKU提示**：无法映射的SKU会显示并跳过
+    4. 下载处理后的文件，根据Retailer ID分别复制到不同店铺
     """)
     
     uploaded_file = st.file_uploader("选择要处理的Excel文件", type=["xlsx"])
-    # 签收服务默认改为 False
-    signature_required = st.checkbox("要求签收服务 (Delivery Signature Required)", value=False)
+    signature_required = st.checkbox("要求签收服务 (Delivery Signature Required)", value=True)
     
+    # 侧边栏
     with st.sidebar:
         st.header("历史记录管理")
         if st.button("清空所有处理记录"):
-            clear_all_records()
-            st.rerun()
-        if st.button("下载当前记录文件"):
-            df_records = get_processed_records_df()
-            if not df_records.empty:
-                csv = df_records.to_csv(index=False).encode('utf-8')
-                st.download_button("点击下载", csv, file_name="processed_orders.csv", mime="text/csv")
+            if os.path.exists(PROCESSED_LOG_FILE):
+                os.remove(PROCESSED_LOG_FILE)
+                st.success("已清空所有历史记录，下次上传将重新处理所有订单。")
             else:
-                st.info("暂无记录。")
+                st.info("记录文件不存在，无需清空。")
+        if st.button("下载当前记录文件"):
+            if os.path.exists(PROCESSED_LOG_FILE):
+                with open(PROCESSED_LOG_FILE, "rb") as f:
+                    st.download_button("点击下载", f, file_name=PROCESSED_LOG_FILE)
+            else:
+                st.info("暂无记录文件。")
+        
         st.markdown("---")
-        st.header("错误日志")
-        if os.path.exists(ERROR_LOG_FILE):
-            with open(ERROR_LOG_FILE, "r", encoding='utf-8') as f:
-                log_content = f.read()
-            with st.expander("查看日志"):
-                st.text(log_content[-2000:])  # 显示末尾部分
-            st.download_button(
-                label="下载完整日志",
-                data=log_content,
-                file_name=f"error_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-            )
-        else:
-            st.info("暂无错误日志")
+        st.markdown("### 店铺Retailer ID")
+        st.markdown("- WF-1店 (007系列): `33054`")
+        st.markdown("- WF-2店 (008系列): `35369`")
+        st.markdown("- WF-3店 (006/009系列): `43682`")
     
     if uploaded_file is not None:
         try:
@@ -348,9 +546,11 @@ def main():
             if '邮编' in df.columns:
                 df['邮编'] = df['邮编'].fillna('').astype(str).str.strip()
             st.success(f"成功读取文件，共 {len(df)} 行数据")
+            
             with st.expander("查看原始数据预览"):
                 st.dataframe(df.head())
             
+            # 加载历史记录
             processed_set = load_processed_orders()
             duplicates, new_df = check_duplicate_orders(df, processed_set)
             
@@ -358,6 +558,7 @@ def main():
                 st.warning(f"发现 {len(duplicates)} 个已处理过的订单（订单号+SKU组合）")
                 dup_preview = pd.DataFrame([{'订单号': d['order_number'], 'SKU': d['sku']} for d in duplicates])
                 st.dataframe(dup_preview)
+                
                 action = st.radio(
                     "请选择对重复订单的处理方式：",
                     ("跳过重复订单（推荐）", "强制重新处理（会覆盖旧记录，慎用！可能造成重复发货）"),
@@ -381,15 +582,20 @@ def main():
                 return
             
             st.info("正在生成WF文件...")
-            processed_df, date_str = process_excel_data(df_to_process, signature_required)
+            processed_df, date_str, skipped_count = process_excel_data(df_to_process, signature_required)
             
-            if processed_df.empty:
+            if processed_df.empty or len(processed_df) <= 1:
                 st.error("处理完成，但没有生成有效数据，请检查原始文件格式")
             else:
-                st.success(f"处理完成，生成 {len(processed_df)} 行数据（含日期行和空行）")
+                total_rows = len(processed_df) - 1
+                st.success(f"处理完成，生成 {total_rows} 条订单数据")
+                if skipped_count > 0:
+                    st.warning(f"⚠️ 跳过 {skipped_count} 个无法映射的SKU")
+                
                 with st.expander("查看处理后的数据预览"):
                     st.dataframe(processed_df.head(20))
                 
+                # 准备记录
                 new_records = []
                 for _, row in df_to_process.iterrows():
                     order = str(row.get('订单号', ''))
@@ -399,29 +605,41 @@ def main():
                 
                 if new_records:
                     if force_overwrite:
-                        # 强制覆盖：先删除这些订单的旧记录（从文件中移除）
-                        existing = load_processed_orders()
+                        current_set = load_processed_orders()
                         to_remove = {(order, sku) for order, sku, _ in new_records}
-                        remaining = existing - to_remove
-                        # 重新写入全部记录
+                        remaining = current_set - to_remove
                         all_records = []
                         for order, sku in remaining:
                             all_records.append((order, sku, "历史记录"))
                         for order, sku, src in new_records:
                             all_records.append((order, sku, src))
                         save_processed_orders(all_records, mode='w')
-                        st.info(f"已更新记录：覆盖了 {len(to_remove)} 个订单。")
+                        st.info(f"已更新记录：覆盖了 {len(to_remove)} 个订单，新增了 {len(new_records)} 个订单。")
                     else:
                         save_processed_orders(new_records, mode='a')
                         st.success(f"已将 {len(new_records)} 个新订单加入处理记录，下次上传将自动跳过。")
                 else:
                     st.info("本次无新订单产生，未更新记录。")
                 
+                # 下载文件
                 original_filename = uploaded_file.name
                 base_name = original_filename.split('.')[0]
-                download_filename = f"{base_name}_处理结果.xlsx"
+                download_filename = f"{base_name}_WF处理结果.xlsx"
                 st.markdown("### 下载处理结果")
                 st.markdown(get_download_link(processed_df, download_filename), unsafe_allow_html=True)
+                
+                # 显示按Retailer ID分类的统计
+                st.markdown("---")
+                st.markdown("### 📊 订单统计")
+                for retailer_id in ["33054", "35369", "43682"]:
+                    count = len(processed_df[processed_df['Retailer ID'] == retailer_id])
+                    if count > 0:
+                        store_name = {
+                            "33054": "WF-1店 (007系列)",
+                            "35369": "WF-2店 (008系列)",
+                            "43682": "WF-3店 (006/009系列)"
+                        }.get(retailer_id, retailer_id)
+                        st.info(f"**{store_name}** (Retailer ID: {retailer_id}): {count} 条订单")
                 
         except Exception as e:
             st.error(f"处理出错: {str(e)}")
@@ -429,7 +647,7 @@ def main():
             log_error(f"处理出错: {str(e)}\n{traceback.format_exc()}")
     
     st.markdown("---")
-    st.markdown("如有问题，请检查错误日志或联系开发人员")
+    st.markdown("如有问题，请检查错误日志文件或联系开发人员")
 
 if __name__ == "__main__":
     main()
