@@ -8,45 +8,40 @@ import traceback
 import os
 import csv
 from datetime import datetime
-import subprocess
 import tempfile
+import requests
 
 st.set_page_config(page_title="赛狐文件和WF对接转化器", page_icon="📊", layout="wide")
 
 # ==================== GitHub配置 ====================
-# 在Streamlit Cloud的Secrets中配置：
-# GITHUB_TOKEN = "你的GitHub Personal Access Token"
-# GITHUB_REPO = "你的用户名/仓库名" 例如 "abc/saifu-tool"
-# MAPPING_FILE_PATH = "sku_mapping.xlsx"  # 仓库中的映射文件路径
-
 def get_github_config():
     """从secrets获取GitHub配置"""
     try:
         token = st.secrets.get("GITHUB_TOKEN", "")
         repo = st.secrets.get("GITHUB_REPO", "")
-        return token, repo
+        branch = st.secrets.get("BRANCH", "main")
+        mapping_path = st.secrets.get("MAPPING_PATH", "sku_mapping.xlsx")
+        return token, repo, branch, mapping_path
     except:
-        return "", ""
+        return "", "", "main", "sku_mapping.xlsx"
 
 def load_mapping_from_github():
-    """从GitHub仓库加载映射表"""
-    token, repo = get_github_config()
+    """从GitHub仓库加载映射表，返回 (SKU映射字典, 店铺ID字典)"""
+    token, repo, branch, mapping_path = get_github_config()
     if not token or not repo:
         st.warning("⚠️ 未配置GitHub Token，将使用内置默认映射表")
-        return get_default_mapping()
+        return get_default_mapping(), get_default_retailer_map()
     
     try:
-        # 使用GitHub API获取文件
-        import requests
-        url = f"https://api.github.com/repos/{repo}/contents/sku_mapping.xlsx"
+        url = f"https://api.github.com/repos/{repo}/contents/{mapping_path}"
         headers = {
             "Authorization": f"token {token}",
             "Accept": "application/vnd.github.v3.raw"
         }
-        response = requests.get(url, headers=headers)
+        params = {"ref": branch} if branch else {}
+        response = requests.get(url, headers=headers, params=params)
         
         if response.status_code == 200:
-            # 保存到临时文件
             with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
                 tmp.write(response.content)
                 tmp_path = tmp.name
@@ -54,19 +49,27 @@ def load_mapping_from_github():
             df = pd.read_excel(tmp_path, dtype=str)
             os.unlink(tmp_path)
             
-            # 构建映射字典
             df = df.dropna(subset=['原始SKU', 'Wayfair SKU'])
-            mapping = dict(zip(
+            
+            sku_mapping = dict(zip(
                 df['原始SKU'].str.strip().str.upper(),
                 df['Wayfair SKU'].str.strip()
             ))
-            return mapping
+            
+            retailer_map = {}
+            if 'Retailer ID' in df.columns:
+                retailer_map = dict(zip(
+                    df['原始SKU'].str.strip().str.upper(),
+                    df['Retailer ID'].str.strip()
+                ))
+            
+            return sku_mapping, retailer_map
         else:
             st.warning(f"⚠️ 无法从GitHub读取映射文件 (状态码: {response.status_code})，使用内置默认映射")
-            return get_default_mapping()
+            return get_default_mapping(), get_default_retailer_map()
     except Exception as e:
         st.warning(f"⚠️ 读取GitHub映射文件失败: {str(e)}，使用内置默认映射")
-        return get_default_mapping()
+        return get_default_mapping(), get_default_retailer_map()
 
 def get_default_mapping():
     """内置默认映射表（作为备用）"""
@@ -185,16 +188,26 @@ def get_default_mapping():
         "009-192-14B": "009-192-14",
     }
 
+def get_default_retailer_map():
+    """内置默认店铺ID映射（当外部表没有Retailer ID列时使用）"""
+    default_mapping = get_default_mapping()
+    retailer_map = {}
+    for sku, wf_sku in default_mapping.items():
+        if wf_sku.startswith("WS007"):
+            retailer_map[sku] = "33054"
+        elif wf_sku.startswith("WS008"):
+            retailer_map[sku] = "35369"
+        elif wf_sku.startswith("006") or wf_sku.startswith("009"):
+            retailer_map[sku] = "43682"
+    return retailer_map
+
 def upload_mapping_to_github(df):
     """将映射表上传到GitHub仓库"""
-    token, repo = get_github_config()
+    token, repo, branch, mapping_path = get_github_config()
     if not token or not repo:
         return False, "未配置GitHub Token，无法上传"
     
     try:
-        import requests
-        import base64
-        
         # 将DataFrame转换为Excel二进制数据
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -202,18 +215,17 @@ def upload_mapping_to_github(df):
         excel_data = output.getvalue()
         
         # 获取当前文件的SHA（用于更新）
-        url = f"https://api.github.com/repos/{repo}/contents/sku_mapping.xlsx"
+        url = f"https://api.github.com/repos/{repo}/contents/{mapping_path}"
         headers = {"Authorization": f"token {token}"}
-        get_response = requests.get(url, headers=headers)
+        get_response = requests.get(url, headers=headers, params={"ref": branch})
         
         payload = {
             "message": "更新SKU映射表",
             "content": base64.b64encode(excel_data).decode('utf-8'),
-            "branch": "main"
+            "branch": branch
         }
         
         if get_response.status_code == 200:
-            # 文件已存在，需要提供SHA
             payload["sha"] = get_response.json()["sha"]
         
         put_response = requests.put(url, headers=headers, json=payload)
@@ -226,14 +238,24 @@ def upload_mapping_to_github(df):
         return False, f"上传出错: {str(e)}"
 
 def create_mapping_template():
-    """创建映射表模板（供下载）"""
+    """创建映射表模板（三列：原始SKU、Wayfair SKU、Retailer ID）"""
     default_mapping = get_default_mapping()
-    df = pd.DataFrame(list(default_mapping.items()), columns=['原始SKU', 'Wayfair SKU'])
-    return df
+    default_retailer = get_default_retailer_map()
+    
+    rows = []
+    for sku, wf_sku in default_mapping.items():
+        rows.append({
+            '原始SKU': sku,
+            'Wayfair SKU': wf_sku,
+            'Retailer ID': default_retailer.get(sku, '')
+        })
+    
+    return pd.DataFrame(rows)
 
-# ==================== 原有的业务逻辑函数 ====================
+# ==================== 原有业务逻辑 ====================
 
 def get_retailer_id(wayfair_sku):
+    """根据Wayfair标准SKU判断店铺（作为回退方案）"""
     if wayfair_sku.startswith("WS007"):
         return "33054"
     elif wayfair_sku.startswith("WS008"):
@@ -365,7 +387,7 @@ def check_duplicate_orders(df, processed_set):
     new_df = df.loc[new_indices].copy()
     return duplicates, new_df
 
-def process_excel_data(df, signature_required, mapping):
+def process_excel_data(df, signature_required, mapping, retailer_map):
     df = consolidate_orders(df)
     
     rows_by_store = {
@@ -391,6 +413,7 @@ def process_excel_data(df, signature_required, mapping):
                 continue
             
             original_sku = row.get('SKU', '')
+            sku_str = str(original_sku).strip().upper()
             wayfair_sku = get_part_number(original_sku, mapping)
             
             if not wayfair_sku:
@@ -401,7 +424,10 @@ def process_excel_data(df, signature_required, mapping):
                 })
                 continue
             
-            retailer_id = get_retailer_id(wayfair_sku)
+            # 优先从映射表取Retailer ID，取不到再用旧的硬编码逻辑兜底
+            retailer_id = retailer_map.get(sku_str) if retailer_map else None
+            if not retailer_id:
+                retailer_id = get_retailer_id(wayfair_sku)
             
             if not retailer_id:
                 skipped_rows.append({
@@ -528,15 +554,15 @@ def main():
     st.markdown("---")
     
     # 加载映射表
-    mapping = load_mapping_from_github()
+    mapping, retailer_map = load_mapping_from_github()
     st.success(f"✅ 已加载映射表，共 {len(mapping)} 条映射规则")
     
     # ===== 映射表管理区域 =====
     with st.expander("📝 管理SKU映射表（助理专用）", expanded=False):
         st.markdown("""
         **操作说明：**
-        1. 点击下方按钮下载当前映射表模板（Excel格式）
-        2. 在Excel中编辑映射关系（两列：`原始SKU` 和 `Wayfair SKU`）
+        1. 点击下方按钮下载当前映射表模板（Excel格式，包含三列：原始SKU、Wayfair SKU、Retailer ID）
+        2. 在Excel中编辑映射关系，**务必填写 Retailer ID 列**（店铺ID：33054 / 35369 / 43682）
         3. 保存后，通过下方上传功能将新映射表提交到GitHub
         4. 提交成功后，所有用户将自动使用最新映射表
         """)
@@ -580,8 +606,10 @@ def main():
         
         # 显示当前映射表预览
         st.markdown("**当前映射表预览（前20条）：**")
-        preview_df = pd.DataFrame(list(mapping.items()), columns=['原始SKU', 'Wayfair SKU']).head(20)
-        st.dataframe(preview_df)
+        preview_df = pd.DataFrame(list(mapping.items()), columns=['原始SKU', 'Wayfair SKU'])
+        if retailer_map:
+            preview_df['Retailer ID'] = preview_df['原始SKU'].map(retailer_map)
+        st.dataframe(preview_df.head(20))
     
     st.markdown("---")
     
@@ -592,7 +620,7 @@ def main():
     2. 选择是否需要**签收服务**（默认不勾选）
     3. 系统自动处理：
        - **SKU智能映射**：自动将赛狐SKU转换为Wayfair标准SKU
-       - **自动分配店铺**：根据SKU自动分配Retailer ID
+       - **自动分配店铺**：根据映射表中的Retailer ID自动分配
        - **自动拆包**：每件商品独立成一个包裹，订单号自动加 -1, -2, -3...
        - **跨文件防重复**：记录已处理的订单
        - **文件内合并**：同一订单号+同一SKU自动合并数量
@@ -675,7 +703,7 @@ def main():
                 return
             
             st.info("正在生成WF文件...")
-            processed_df, date_str, skipped_count = process_excel_data(df_to_process, signature_required, mapping)
+            processed_df, date_str, skipped_count = process_excel_data(df_to_process, signature_required, mapping, retailer_map)
             
             if processed_df.empty or len(processed_df) <= 1:
                 st.error("处理完成，但没有生成有效数据，请检查原始文件格式")
